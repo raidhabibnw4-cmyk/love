@@ -17,7 +17,7 @@
   #app {
     position: relative;
     width: 90vw;
-    max-width: 600px;
+    max-width: 900px;
     height: 80vh;
     background: white;
     border-radius: 20px;
@@ -51,7 +51,7 @@
     text-align: center;
     margin-bottom: 20px;
   }
-  #loginButton, #changePasswordBtn, #logoutButton {
+  #loginButton, #changePasswordBtn, #logoutButton, #addNoteBtn {
     background: #d6336c;
     border: none;
     padding: 10px 20px;
@@ -62,14 +62,47 @@
     margin-top: 10px;
     transition: background 0.3s ease;
   }
-  #loginButton:hover, #logoutButton:hover, #changePasswordBtn:hover {
+  #loginButton:hover, #logoutButton:hover, #changePasswordBtn:hover, #addNoteBtn:hover {
     background: #ff4d94;
   }
   #noteArea {
     flex-grow: 1;
-    margin: 20px;
+    display: flex;
+    height: 100%;
+  }
+  #noteList {
+    width: 180px;
+    border-right: 2px solid #d6336c;
     display: flex;
     flex-direction: column;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  #noteList button.noteItem {
+    background: #ffd6e8;
+    border: none;
+    margin: 5px 0;
+    padding: 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: left;
+    font-weight: 600;
+    color: #a30043;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.3s ease;
+  }
+  #noteList button.noteItem.active {
+    background: #ff4d94;
+    color: white;
+  }
+  #notesMain {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 15px;
   }
   #noteText {
     flex-grow: 1;
@@ -81,6 +114,13 @@
     resize: none;
     box-sizing: border-box;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin-bottom: 10px;
+  }
+  #saveStatus {
+    font-size: 0.9rem;
+    height: 20px;
+    color: #d6336c;
+    user-select: none;
   }
   .balloon {
     position: fixed;
@@ -119,9 +159,15 @@
     <button id="loginButton">Unlock</button>
   </div>
   <div id="noteArea" style="display:none;">
-    <textarea id="noteText" placeholder="Write your secret notes here..."></textarea>
-    <button id="changePasswordBtn">Change Password</button>
-    <button id="logoutButton">Logout</button>
+    <div id="noteList">
+      <button id="addNoteBtn">+ Add Note</button>
+    </div>
+    <div id="notesMain">
+      <textarea id="noteText" placeholder="Select or add a note to start writing..." disabled></textarea>
+      <div id="saveStatus"></div>
+      <button id="changePasswordBtn">Change Password</button>
+      <button id="logoutButton">Logout</button>
+    </div>
   </div>
 </div>
 
@@ -143,19 +189,26 @@
   const db = firebase.firestore();
 
   const passwordRef = db.collection('meta').doc('sharedPassword');
-  const noteRef = db.collection('notes').doc('sharedNote');
+  const notesCollection = db.collection('notes');
 
   const loginForm = document.getElementById('loginForm');
   const passwordInput = document.getElementById('passwordInput');
   const loginButton = document.getElementById('loginButton');
   const noteArea = document.getElementById('noteArea');
+  const noteList = document.getElementById('noteList');
   const noteText = document.getElementById('noteText');
   const logoutButton = document.getElementById('logoutButton');
   const changePasswordBtn = document.getElementById('changePasswordBtn');
+  const addNoteBtn = document.getElementById('addNoteBtn');
+  const saveStatus = document.getElementById('saveStatus');
 
-  let unsubscribeNote = null;
   let currentPassword = "";
   let loggedIn = false;
+  let currentNoteId = null;
+  let unsubscribeNotesListener = null;
+  let unsubscribeNoteListener = null;
+  let saveTimer = null;
+  let isSaving = false;
 
   function setSessionLogin(value) {
     sessionStorage.setItem('loggedIn', value ? 'true' : 'false');
@@ -174,7 +227,7 @@
     if (entered === currentPassword) {
       setSessionLogin(true);
       showNoteArea();
-      startListening();
+      setupNotesListener();
     } else {
       alert("Wrong password!");
     }
@@ -185,38 +238,127 @@
   function showNoteArea() {
     loginForm.style.display = "none";
     noteArea.style.display = "flex";
-    noteText.focus();
     loggedIn = true;
   }
 
   logoutButton.addEventListener("click", () => {
     setSessionLogin(false);
-    noteText.value = "";
-    stopListening();
+    stopAllListeners();
+    clearUI();
     loginForm.style.display = "flex";
     noteArea.style.display = "none";
     loggedIn = false;
   });
 
-  async function startListening() {
-    unsubscribeNote = noteRef.onSnapshot(doc => {
-      if (doc.exists && noteText.value !== doc.data().text) {
-        noteText.value = doc.data().text;
+  function clearUI() {
+    noteList.querySelectorAll('.noteItem').forEach(el => el.remove());
+    noteText.value = "";
+    noteText.disabled = true;
+    saveStatus.textContent = "";
+    currentNoteId = null;
+  }
+
+  function stopAllListeners() {
+    if (unsubscribeNotesListener) unsubscribeNotesListener();
+    if (unsubscribeNoteListener) unsubscribeNoteListener();
+  }
+
+  // Listen for list of notes and update sidebar
+  function setupNotesListener() {
+    unsubscribeNotesListener = notesCollection.onSnapshot(snapshot => {
+      const notes = [];
+      snapshot.forEach(doc => {
+        notes.push({ id: doc.id, ...doc.data() });
+      });
+      renderNoteList(notes);
+      // Auto select first note if none selected
+      if (!currentNoteId && notes.length > 0) {
+        selectNote(notes[0].id);
+      } else if (currentNoteId) {
+        // If current note deleted, reset
+        if (!notes.find(n => n.id === currentNoteId)) {
+          currentNoteId = null;
+          noteText.value = "";
+          noteText.disabled = true;
+        }
       }
+    }, err => {
+      console.error("Notes list listener error:", err);
     });
   }
 
-  function stopListening() {
-    if (unsubscribeNote) unsubscribeNote();
+  function renderNoteList(notes) {
+    // Remove old note buttons except addNoteBtn
+    noteList.querySelectorAll('.noteItem').forEach(el => el.remove());
+    notes.forEach(note => {
+      const btn = document.createElement('button');
+      btn.textContent = note.title || "(Untitled)";
+      btn.classList.add('noteItem');
+      if (note.id === currentNoteId) btn.classList.add('active');
+      btn.title = note.title || "";
+      btn.onclick = () => selectNote(note.id);
+      noteList.appendChild(btn);
+    });
   }
 
-  let saveTimer = null;
+  function selectNote(noteId) {
+    if (unsubscribeNoteListener) unsubscribeNoteListener();
+    currentNoteId = noteId;
+    // highlight active in list
+    noteList.querySelectorAll('.noteItem').forEach(btn => {
+      btn.classList.toggle('active', btn.textContent === (document.querySelector(`[data-id="${noteId}"]`)?.textContent));
+    });
+    noteText.disabled = true;
+    saveStatus.textContent = "Loading note...";
+    unsubscribeNoteListener = notesCollection.doc(noteId).onSnapshot(doc => {
+      if (doc.exists) {
+        noteText.value = doc.data().text || "";
+        saveStatus.textContent = "";
+        noteText.disabled = false;
+        noteText.focus();
+      } else {
+        noteText.value = "";
+        saveStatus.textContent = "Note not found.";
+        noteText.disabled = true;
+      }
+    }, err => {
+      saveStatus.textContent = "Failed to load note.";
+      console.error("Note listener error:", err);
+    });
+  }
+
+  // Save note text to Firebase with debounce + error handling
   noteText.addEventListener("input", () => {
-    if (!loggedIn) return;
+    if (!loggedIn || !currentNoteId) return;
+    saveStatus.textContent = "Saving...";
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      noteRef.set({ text: noteText.value });
-    }, 500);
+    saveTimer = setTimeout(() => saveNoteText(), 700);
+  });
+
+  async function saveNoteText() {
+    if (!currentNoteId) return;
+    isSaving = true;
+    try {
+      await notesCollection.doc(currentNoteId).set({ text: noteText.value, title: noteText.value.split('\n')[0].slice(0, 20) || "Untitled" }, { merge: true });
+      saveStatus.textContent = "Saved";
+    } catch (err) {
+      saveStatus.textContent = "Save failed. Check network.";
+      console.error("Save error:", err);
+    } finally {
+      isSaving = false;
+    }
+  }
+
+  addNoteBtn.addEventListener("click", async () => {
+    const title = prompt("Enter title for new note:", "New note");
+    if (!title) return;
+    try {
+      const newNote = await notesCollection.add({ text: "", title: title.trim() || "Untitled" });
+      selectNote(newNote.id);
+    } catch (err) {
+      alert("Failed to add note, try again.");
+      console.error(err);
+    }
   });
 
   changePasswordBtn.addEventListener("click", async () => {
@@ -225,8 +367,13 @@
       alert("Password too short.");
       return;
     }
-    await passwordRef.set({ value: newPass });
-    alert("Password updated! Use this new password next time.");
+    try {
+      await passwordRef.set({ value: newPass });
+      alert("Password updated! Use this new password next time.");
+    } catch (err) {
+      alert("Failed to update password.");
+      console.error(err);
+    }
   });
 
   // Auto login if session active
@@ -234,7 +381,7 @@
     if (sessionStorage.getItem("loggedIn") === "true") {
       currentPassword = await getStoredPassword();
       showNoteArea();
-      startListening();
+      setupNotesListener();
     }
   })();
 
