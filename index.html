@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sinthyzz Megh - Shared Notes</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; height: 100%;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #fff0f6;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  #app {
+    position: relative;
+    width: 90vw;
+    max-width: 600px;
+    height: 80vh;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 6px 25px rgba(255,105,180,0.4);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 15px 20px;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #d6336c;
+    text-align: center;
+    border-bottom: 2px solid #ffc0cb;
+    user-select: none;
+  }
+  #loginForm {
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #passwordInput {
+    padding: 12px;
+    font-size: 1rem;
+    border-radius: 10px;
+    border: 2px solid #d6336c;
+    outline: none;
+    width: 80%;
+    max-width: 300px;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  #loginButton, #changePasswordBtn, #logoutButton {
+    background: #d6336c;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 12px;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: background 0.3s ease;
+  }
+  #loginButton:hover, #logoutButton:hover, #changePasswordBtn:hover {
+    background: #ff4d94;
+  }
+  #noteArea {
+    flex-grow: 1;
+    margin: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+  #noteText {
+    flex-grow: 1;
+    width: 100%;
+    border-radius: 15px;
+    border: 2px solid #d6336c;
+    padding: 15px;
+    font-size: 1.1rem;
+    resize: none;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+  .balloon {
+    position: fixed;
+    width: 40px;
+    height: 50px;
+    background: radial-gradient(circle at 50% 40%, #ff66aa, #cc0066);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    opacity: 0.85;
+    animation-name: floatUp;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+  }
+  .balloon:after {
+    content: "❤";
+    position: absolute;
+    top: 12px;
+    left: 9px;
+    font-size: 30px;
+    color: white;
+    text-shadow: 0 0 4px #ff4d94;
+    user-select: none;
+  }
+  @keyframes floatUp {
+    0% { transform: translateY(100vh); opacity: 0; }
+    10% { opacity: 0.85; }
+    100% { transform: translateY(-150px); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>Sinthyzz Megh</header>
+  <div id="loginForm">
+    <input id="passwordInput" type="password" placeholder="Enter shared password" autocomplete="off" />
+    <button id="loginButton">Unlock</button>
+  </div>
+  <div id="noteArea" style="display:none;">
+    <textarea id="noteText" placeholder="Write your secret notes here..."></textarea>
+    <button id="changePasswordBtn">Change Password</button>
+    <button id="logoutButton">Logout</button>
+  </div>
+</div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyCI5PiOGhN0ydm1bJ2MXcD4VNL-pD6GhE4",
+    authDomain: "notes-5015e.firebaseapp.com",
+    projectId: "notes-5015e",
+    storageBucket: "notes-5015e.firebasestorage.app",
+    messagingSenderId: "248945705845",
+    appId: "1:248945705845:web:1520f8f14ff8036197093c"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const passwordRef = db.collection('meta').doc('sharedPassword');
+  const noteRef = db.collection('notes').doc('sharedNote');
+
+  const loginForm = document.getElementById('loginForm');
+  const passwordInput = document.getElementById('passwordInput');
+  const loginButton = document.getElementById('loginButton');
+  const noteArea = document.getElementById('noteArea');
+  const noteText = document.getElementById('noteText');
+  const logoutButton = document.getElementById('logoutButton');
+  const changePasswordBtn = document.getElementById('changePasswordBtn');
+
+  let unsubscribeNote = null;
+  let currentPassword = "";
+  let loggedIn = false;
+
+  function setSessionLogin(value) {
+    sessionStorage.setItem('loggedIn', value ? 'true' : 'false');
+  }
+
+  async function getStoredPassword() {
+    const doc = await passwordRef.get();
+    if (doc.exists) return doc.data().value;
+    await passwordRef.set({ value: "iloveyou2025" }); // default password first time
+    return "iloveyou2025";
+  }
+
+  async function login() {
+    currentPassword = await getStoredPassword();
+    const entered = passwordInput.value.trim();
+    if (entered === currentPassword) {
+      setSessionLogin(true);
+      showNoteArea();
+      startListening();
+    } else {
+      alert("Wrong password!");
+    }
+  }
+
+  loginButton.addEventListener("click", login);
+
+  function showNoteArea() {
+    loginForm.style.display = "none";
+    noteArea.style.display = "flex";
+    noteText.focus();
+    loggedIn = true;
+  }
+
+  logoutButton.addEventListener("click", () => {
+    setSessionLogin(false);
+    noteText.value = "";
+    stopListening();
+    loginForm.style.display = "flex";
+    noteArea.style.display = "none";
+    loggedIn = false;
+  });
+
+  async function startListening() {
+    unsubscribeNote = noteRef.onSnapshot(doc => {
+      if (doc.exists && noteText.value !== doc.data().text) {
+        noteText.value = doc.data().text;
+      }
+    });
+  }
+
+  function stopListening() {
+    if (unsubscribeNote) unsubscribeNote();
+  }
+
+  let saveTimer = null;
+  noteText.addEventListener("input", () => {
+    if (!loggedIn) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      noteRef.set({ text: noteText.value });
+    }, 500);
+  });
+
+  changePasswordBtn.addEventListener("click", async () => {
+    const newPass = prompt("Enter new shared password (min 3 chars):");
+    if (!newPass || newPass.length < 3) {
+      alert("Password too short.");
+      return;
+    }
+    await passwordRef.set({ value: newPass });
+    alert("Password updated! Use this new password next time.");
+  });
+
+  // Auto login if session active
+  (async () => {
+    if (sessionStorage.getItem("loggedIn") === "true") {
+      currentPassword = await getStoredPassword();
+      showNoteArea();
+      startListening();
+    }
+  })();
+
+  // Balloons animation
+  function createBalloon(){
+    const balloon = document.createElement('div');
+    balloon.classList.add('balloon');
+    balloon.style.left = Math.random() * window.innerWidth + 'px';
+    balloon.style.animationDuration = (8 + Math.random() * 6) + 's';
+    balloon.style.animationDelay = (Math.random() * 10) + 's';
+    document.body.appendChild(balloon);
+    balloon.addEventListener('animationend', () => {
+      balloon.remove();
+      createBalloon();
+    });
+  }
+  for(let i=0; i<10; i++) createBalloon();
+</script>
+
+</body>
+</html>
